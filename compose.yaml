@@ -29,6 +29,23 @@ services:
       - ./.lab28:/runtime
     restart: "no"
 
+  airflow-db:
+    image: postgres:16-alpine
+    profiles: ["full"]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_DB: airflow
+      # The database is reachable only on the private Compose network. Avoid a
+      # checked-in lab password while keeping local bootstrap non-interactive.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   kafka:
     image: apache/kafka:4.3.1
     hostname: kafka
@@ -76,7 +93,9 @@ services:
       retries: 30
 
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v3.15.2
+    build:
+      context: .
+      dockerfile: docker/mlflow/Dockerfile
     command:
       - mlflow
       - server
@@ -112,9 +131,15 @@ services:
         python /workspace/scripts/create_feature_snapshot.py
         /workspace/.lab28/delta/exports/asker_activity &&
         feast apply &&
-        exec feast serve --host 0.0.0.0 --port 6566 --metrics
+        exec opentelemetry-instrument feast serve --host 0.0.0.0 --port 6566 --metrics
     environment:
       <<: *lab-environment
+      OTEL_SERVICE_NAME: lab28-feast
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: http/protobuf
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
     ports:
       - "${LAB28_FEAST_PORT:-6566}:6566"
       - "${LAB28_FEAST_METRICS_PORT:-6570}:8000"
@@ -190,6 +215,11 @@ services:
       AIRFLOW__CORE__PARALLELISM: "4"
       AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "4"
       AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "1"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow@airflow-db/airflow
+      # Parsing may contend with Spark/embedding work on a shared laptop. Do
+      # not deactivate a valid DAG merely because one parse exceeds defaults.
+      AIRFLOW__DAG_PROCESSOR__DAG_FILE_PROCESSOR_TIMEOUT: "300"
+      AIRFLOW__DAG_PROCESSOR__STALE_DAG_THRESHOLD: "600"
       AIRFLOW__API__BASE_URL: http://airflow:8080
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://127.0.0.1:8080/execution/
       OTEL_SERVICE_NAME: lab28-airflow
@@ -200,6 +230,8 @@ services:
       - ./.lab28:/workspace/.lab28
       - airflow-data:/opt/airflow
     depends_on:
+      airflow-db:
+        condition: service_healthy
       kafka:
         condition: service_healthy
       spark-connect:
@@ -271,6 +303,9 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.159.0
     command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-lab28-platform}
     volumes:
       - ./monitoring/otel-collector.yaml:/etc/otelcol/config.yaml:ro
     ports:
@@ -324,6 +359,7 @@ services:
       - prometheus
 
 volumes:
+  airflow-db-data:
   airflow-data:
   grafana-data:
   mlflow-data:

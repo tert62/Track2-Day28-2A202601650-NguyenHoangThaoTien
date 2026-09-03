@@ -70,14 +70,18 @@ static_resources:
                   address:
                     socket_address: {address: api, port_value: 8000}
       health_checks:
-        - timeout: 2s
+        - timeout: 5s
           interval: 2s
-          unhealthy_threshold: 1
+          unhealthy_threshold: 3
           healthy_threshold: 1
-          # Liveness decides whether Envoy can route. Application readiness is
-          # deliberately proxied so students can see the exact degraded
-          # dependency report instead of an opaque "no healthy upstream".
-          http_health_check: {path: /health}
+          # /ready (not /health) drives ejection: api.py returns 200 for both
+          # "ready" and "degraded" so a cold optional dependency stays in
+          # rotation, and 503 only for "not_ready" — exactly what should pull
+          # a pod out of the gateway's rotation. /ready probes live
+          # dependencies (including a real remote vLLM endpoint), so it can
+          # take over a second — a tight 2s timeout flaps on ordinary network
+          # jitter, not just on a genuine outage.
+          http_health_check: {path: /ready}
       common_lb_config:
         healthy_panic_threshold: {value: 0}
     - name: otel_collector

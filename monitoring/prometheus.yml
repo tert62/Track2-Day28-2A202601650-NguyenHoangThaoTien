@@ -43,5 +43,8 @@ scrape_configs:
     static_configs: [{targets: ["prometheus:9090"]}]
 
   - job_name: lab28-vllm-optional
-    static_configs: [{targets: ["host.docker.internal:8001"]}]
+    # Update this target to match LAB28_VLLM_BASE_URL's host whenever the
+    # tunnel/endpoint changes — Prometheus static_configs cannot read .env.
+    scheme: https
+    static_configs: [{targets: ["adoption-sms-evans-tournament.trycloudflare.com"]}]
     metrics_path: /metrics

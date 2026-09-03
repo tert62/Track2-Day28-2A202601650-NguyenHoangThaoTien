@@ -18,6 +18,11 @@ exporters:
     endpoint: jaeger:4317
     tls:
       insecure: true
+  otlphttp/langsmith:
+    endpoint: https://api.smith.langchain.com/otel
+    headers:
+      x-api-key: ${env:LANGSMITH_API_KEY}
+      Langsmith-Project: ${env:LANGSMITH_PROJECT}
   debug:
     verbosity: basic
 
@@ -39,7 +44,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/jaeger, debug]
+      exporters: [otlp/jaeger, otlphttp/langsmith, debug]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]

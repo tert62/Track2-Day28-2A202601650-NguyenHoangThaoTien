@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -247,14 +248,22 @@ class BatchConsumer:
                 "group.id": settings.group_id,
                 "auto.offset.reset": "earliest",
                 "enable.auto.commit": False,
-                "session.timeout.ms": 45000,
-                "max.poll.interval.ms": 300000,
+                # Spark Connect can take longer than a minute to warm up on a
+                # shared laptop. Keep the group lease long enough for durable
+                # processing, while max.poll remains a finite stuck-task guard.
+                "session.timeout.ms": 120000,
+                "max.poll.interval.ms": 900000,
             }
         )
         self._consumer.subscribe([self._topic])
 
     def poll_batch(
-        self, max_messages: int, *, idle_polls: int = 3, poll_timeout: float = 1.0
+        self,
+        max_messages: int,
+        *,
+        idle_polls: int = 3,
+        poll_timeout: float = 1.0,
+        assignment_timeout: float = 30.0,
     ) -> tuple[list[ConsumedMessage], list[DeadLetterEnvelope]]:
         """Poll up to ``max_messages``.
 
@@ -266,10 +275,17 @@ class BatchConsumer:
         decoded: list[ConsumedMessage] = []
         poison: list[DeadLetterEnvelope] = []
         idle = 0
+        assignment_deadline = time.monotonic() + assignment_timeout
 
         while len(decoded) + len(poison) < max_messages and idle < idle_polls:
             message = self._consumer.poll(poll_timeout)
             if message is None:
+                # A new consumer first joins the group and waits for a
+                # partition assignment. On a busy local stack that handshake
+                # can outlive three one-second polls; those are startup, not
+                # proof that the topic is empty.
+                if not self._consumer.assignment() and time.monotonic() < assignment_deadline:
+                    continue
                 idle += 1
                 continue
             if message.error():

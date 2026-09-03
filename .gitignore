@@ -1,4 +1,6 @@
 .venv/
+.env
+.env.*
 .lab28/
 __pycache__/
 *.pyc
