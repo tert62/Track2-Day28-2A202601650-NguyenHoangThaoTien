@@ -62,6 +62,32 @@ thể là vòng round-trip thật tới vLLM qua Cloudflare tunnel (Kaggle), so 
 Kafka/Qdrant/Feast/MLflow cục bộ chỉ mất vài ms. Đây là chi phí mạng thật của
 một endpoint GPU free-tier, không phải giới hạn của code phục vụ.
 
+## GitOps drift/rollback (kind + Argo CD)
+
+Chạy trên một kind cluster riêng (`kind-lab28`, tách biệt khỏi cluster lab khác
+đang có sẵn trên máy) với Argo CD cài mới. `gitops/application.yaml` được trỏ
+sang fork thật (`tert62/Track2-...`) ở tag `v3.0.1` để Argo CD sync đúng code đã
+sửa, thay vì tag mẫu của lớp. Kết quả (`evidence/gitops-drift-rollback.json`):
+
+- Drift: `kubectl scale deploy/lab28-api --replicas=5` → `selfHeal` tự đưa về
+  `replicas: 2` trong ~6 giây, không cần lệnh sync thủ công.
+- Promotion: tag `v3.0.2` (đổi `replicas: 2` → `3`) → Argo CD tự sync sang
+  revision mới trong ~15 giây.
+- Rollback: đổi `targetRevision` trở lại `v3.0.1` → Argo CD reconcile về đúng
+  revision cũ (`replicas: 2`) trong ~20 giây; `status.history` giữ đầy đủ 3
+  revision đã deploy để audit.
+
+Giới hạn môi trường: image `ghcr.io/vinuni-ai20k/day28-platform-api:3.0.0` là
+registry riêng của lớp, trả `403 Forbidden` khi pull ẩn danh — pod ở trạng thái
+`ImagePullBackOff` trong suốt demo. Điều này không ảnh hưởng đến việc chứng
+minh cơ chế GitOps (desired-state reconciliation, self-heal, rollback đều xảy
+ra ở tầng Kubernetes resource, độc lập với việc container có khởi động được
+hay không) nhưng nghĩa là chưa chứng minh được pod thật sự Ready/serving trên
+cluster này. Cluster cũng thiếu sẵn Gateway API CRD (`gateway.networking.k8s.io`)
+— phải cài `gateway-api v1.3.0 standard-install` trước khi Argo CD sync được
+`Gateway`/`HTTPRoute`, một bước setup không nằm trong repo mà một cluster
+production cần chuẩn bị trước.
+
 ## Production gaps
 
 1. Docker Compose là môi trường lab một node; chưa chứng minh multi-zone HA,

@@ -126,12 +126,24 @@ def dependency_down(service: str) -> Iterator[None]:
 
     ``finally`` is load-bearing: a failed assertion inside the block must still
     restore the stack, or one red test cascades into every test after it.
+    Waiting for the container's own healthcheck before returning matters too:
+    the gateway now health-checks ``/ready`` (not the always-200 ``/health``),
+    so a caller landing on the api pod while this dependency is still starting
+    up gets a genuine, if transient, "no healthy upstream" — indistinguishable
+    from a real bug unless every test restores a fully healthy dependency
+    before the next one runs.
     """
     compose("stop", service)
     try:
         yield
     finally:
         compose("start", service)
+        wait_until(
+            f"{service} to report healthy after restart",
+            lambda: "healthy" in compose("ps", service).stdout,
+            timeout=60.0,
+            interval=2.0,
+        )
 
 
 # --------------------------------------------------------------------------
