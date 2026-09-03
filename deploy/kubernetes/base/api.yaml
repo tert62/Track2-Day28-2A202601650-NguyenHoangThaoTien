@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: lab28-api
     app.kubernetes.io/part-of: lab28-platform
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels: *labels
   template:
